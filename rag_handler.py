@@ -4,8 +4,10 @@ from langchain_pinecone import PineconeVectorStore
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.schema import HumanMessage
+from langchain.schema import AIMessage
 from dotenv import load_dotenv
 import os
+MAX_MESSAGES = 6
 
 load_dotenv()
 
@@ -15,14 +17,44 @@ embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=os.
 vectorstore = PineconeVectorStore(index_name=index_name, embedding=embeddings)
 chat = ChatOpenAI(model="gpt-4o", temperature=0, streaming=True)
 
-def stream_rag_answer(query: str):
+chat_histories = {}
+
+def get_chat_history(user_id: str):
+    return chat_histories.get(user_id, [])
+
+def add_to_chat_history(user_id: str, message):
+    if user_id not in chat_histories:
+        chat_histories[user_id] = []
+    chat_histories[user_id].append(message)
+
+    if len(chat_histories[user_id]) > MAX_MESSAGES:
+        chat_histories[user_id] = chat_histories[user_id][-MAX_MESSAGES:]
+
+    print(f"[{user_id}] 메시지 저장됨: {message.content}")
+    print(f"[{user_id}] 현재 히스토리 길이: {len(chat_histories[user_id])}")
+
+def stream_rag_answer(user_id: str, query: str, is_new_topic: bool):
+    if is_new_topic:
+        history = []
+        chat_histories[user_id] = []
+    else:
+        history = get_chat_history(user_id)
+
+    # 검색 쿼리 생성 시, 문맥을 고려해서 생성 가능하도록 옵션 (심화)
     retrieved_docs = vectorstore.similarity_search(query, k=10)
     docs_content = "\n---------------------------\n".join([doc.page_content for doc in retrieved_docs])
 
+    # Prompt 구성
     prompt = PromptTemplate(
         template="""
-당신은 아주대학교의 생활 도우미입니다. 다음 문서를 바탕으로 질문에 구체적으로 답하세요.
-문서에 해당 내용이 없으면 모른다고 답하고, 단답형이 아닌 친절한 말투로 설명하세요.
+당신은 아주대학교의 생활 도우미 챗봇입니다. 사용자의 질문에 답할 때는 반드시 다음을 지키세요:
+
+1. 문서에서 답변을 찾을 수 없거나 질문에 정보가 부족한 경우, **질문에 필요한 정보를 되묻고**, 충분한 정보가 주어진 후에만 답변하세요.
+2. 예를 들어 '졸업 총 이수학점이 몇 점인가요?' 라는 질문이 오면, 학번이나 학과, 학년 등의 정보가 없다면 즉시 질문하지 말고 다음과 같이 물어보세요:  
+   - "몇 학번이신가요?"  
+   - "소속 학과도 함께 알려주시면 정확한 정보를 드릴 수 있어요."
+3. 절대 임의로 추측하거나 일반적인 기준을 말하지 말고, 필요한 정보를 받은 후에만 문서를 바탕으로 구체적으로 답하세요.
+4. 사용자가 이전 답변에 대해 후속 질문을 하면 이전 문맥을 반영해서 대답하세요.
 문서:
 {documents}
 
@@ -32,12 +64,19 @@ def stream_rag_answer(query: str):
         input_variables=["documents", "query"]
     )
 
-    messages = [HumanMessage(content=prompt.format(documents=docs_content, query=query))]
+    user_prompt = prompt.format(documents=docs_content, query=query)
 
-    # Generator 형태로 응답 스트리밍
+    messages = history[-MAX_MESSAGES:] + [HumanMessage(content=user_prompt)]
+
     def generator():
+        response_text = ""
         for chunk in chat.stream(messages):
             if chunk.content:
+                response_text += chunk.content
                 yield chunk.content
+
+        # 응답이 끝나면 이력을 저장
+        add_to_chat_history(user_id, HumanMessage(content=query))
+        add_to_chat_history(user_id, AIMessage(content=response_text))
 
     return generator
