@@ -17,23 +17,25 @@ load_dotenv()
 
 # Milvus 설정
 collection_name = "a_mate"
-connection_args = {"host": "localhost", "port": "19530"} #TODO
+connection_args = {"host": "mate.ajou.app", "port": "28116"}
 
 embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=os.getenv("OPENAI_API_KEY"))
 vectorstore = Milvus(
     collection_name=collection_name,
     embedding_function=embeddings,
     connection_args=connection_args,
-    # partition_name="your_partition"  # TODO
+    # partition_name="Facilities"
 )
 
 chat = ChatOpenAI(model="gpt-4o", temperature=0, streaming=True)
 chat_histories = {}
 
+
 # 채팅 이력 가져오기
 async def get_chat_history(user_id: str):
     data = await redis_client.lrange(f"chat_history:{user_id}", 0, -1)
     return [json.loads(item) for item in data]
+
 
 # 채팅 이력 저장
 async def add_to_chat_history(user_id: str, message):
@@ -44,11 +46,13 @@ async def add_to_chat_history(user_id: str, message):
     await redis_client.rpush(f"chat_history:{user_id}", json.dumps(message_data))
     await redis_client.ltrim(f"chat_history:{user_id}", -MAX_MESSAGES, -1)
 
+
 # 메시지 파싱
 def parse_message(data):
     if data["type"] == "human":
         return HumanMessage(content=data["content"])
     return AIMessage(content=data["content"])
+
 
 # RAG 응답 생성
 async def stream_rag_answer(user_id: str, query: str, is_new_topic: bool):
@@ -61,7 +65,10 @@ async def stream_rag_answer(user_id: str, query: str, is_new_topic: bool):
 
     # 유사 문서 검색
     retrieved_docs = vectorstore.similarity_search(query, k=10)
-    docs_content = "\n---------------------------\n".join([doc.page_content for doc in retrieved_docs])
+    docs_content = "\n---------------------------\n".join([
+        f"[출처: {doc.metadata.get('urlTitle', '제목 없음')}] {doc.page_content}\n링크: {doc.metadata.get('scrapUrl', '링크 없음')}"
+        for doc in retrieved_docs
+    ])
 
     # Prompt 구성
     prompt = PromptTemplate(
