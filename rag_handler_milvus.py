@@ -9,15 +9,30 @@ import os
 import json
 import redis.asyncio as aioredis
 
-# Redis 설정
-redis_client = aioredis.Redis(host='localhost', port=6379, decode_responses=True)
-MAX_MESSAGES = 6
-
 load_dotenv()
+
+REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
+REDIS_PORT = int(os.getenv('REDIS_PORT'))
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
+
+MILVUS_HOST = os.getenv('MILVUS_HOST')
+MILVUS_PORT = os.getenv('MILVUS_PORT')
+
+redis_client = aioredis.Redis(
+    host=REDIS_HOST,
+    port=REDIS_PORT,
+    password=REDIS_PASSWORD,
+    decode_responses=True
+)
+
+MAX_MESSAGES = 6
 
 # Milvus 설정
 collection_name = "a_mate"
-connection_args = {"host": "mate.ajou.app", "port": "28116"}
+connection_args = {
+    "host": MILVUS_HOST,
+    "port": MILVUS_PORT
+}
 
 embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=os.getenv("OPENAI_API_KEY"))
 vectorstore = Milvus(
@@ -30,12 +45,10 @@ vectorstore = Milvus(
 chat = ChatOpenAI(model="gpt-4o", temperature=0, streaming=True)
 chat_histories = {}
 
-
 # 채팅 이력 가져오기
 async def get_chat_history(user_id: str):
     data = await redis_client.lrange(f"chat_history:{user_id}", 0, -1)
     return [json.loads(item) for item in data]
-
 
 # 채팅 이력 저장
 async def add_to_chat_history(user_id: str, message):
@@ -45,7 +58,6 @@ async def add_to_chat_history(user_id: str, message):
     }
     await redis_client.rpush(f"chat_history:{user_id}", json.dumps(message_data))
     await redis_client.ltrim(f"chat_history:{user_id}", -MAX_MESSAGES, -1)
-
 
 # 메시지 파싱
 def parse_message(data):
