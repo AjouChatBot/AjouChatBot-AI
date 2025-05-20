@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from typing import List
 
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse
 from pydantic import BaseModel
 from rag_handler_milvus import stream_rag_answer, get_chat_history
 
@@ -36,3 +36,7 @@ async def ask_question(payload: Question):
 async def get_history(user_id: str):
     history = await get_chat_history(user_id)
     return history
+
+@app.get("/health")
+async def check_health():
+    return PlainTextResponse(content="ok", status_code=200)
