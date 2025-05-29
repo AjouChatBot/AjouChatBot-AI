@@ -75,12 +75,18 @@ async def stream_rag_answer(user_id: str, query: str, is_new_topic: bool):
         raw_history = await get_chat_history(user_id)
         history = [parse_message(msg) for msg in raw_history]
 
-    # 유사 문서 검색
-    retrieved_docs = vectorstore.similarity_search(query, k=10)
-    docs_content = "\n---------------------------\n".join([
-        f"[출처: {doc.metadata.get('urlTitle', '제목 없음')}] {doc.page_content}\n링크: {doc.metadata.get('scrapUrl', '링크 없음')}"
-        for doc in retrieved_docs
-    ])
+    # 유사 문서 검색 (중복 제거)
+    raw_docs = vectorstore.similarity_search(query, k=20)
+    unique_docs = []
+    seen_ids = set()
+
+    for doc in raw_docs:
+        doc_id = doc.metadata.get("id")
+        if doc_id and doc_id not in seen_ids:
+            seen_ids.add(doc_id)
+            unique_docs.append(doc)
+        if len(unique_docs) == 10:
+            break
 
     # Prompt 구성
     prompt = PromptTemplate(
@@ -110,7 +116,7 @@ async def stream_rag_answer(user_id: str, query: str, is_new_topic: bool):
         input_variables=["documents", "query"]
     )
 
-    user_prompt = prompt.format(documents=docs_content, query=query)
+    user_prompt = prompt.format(documents=unique_docs, query=query)
     messages = history[-MAX_MESSAGES:] + [HumanMessage(content=user_prompt)]
 
     async def generator():
